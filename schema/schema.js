@@ -1,6 +1,7 @@
 const graphql = require("graphql");
-const Author = require("../models/author-Model");
-const Post = require("../models/post-Model");
+const bcrypt = require("bcryptjs");
+const BlogPost = require("../models/blogpost-Model");
+const User = require("../models/user-Model");
 
 const {
   GraphQLObjectType,
@@ -11,103 +12,143 @@ const {
   GraphQLID
 } = graphql;
 
-const PostType = new GraphQLObjectType({
+const BlogPostType = new GraphQLObjectType({
   name: "Post",
   fields: () => ({
     id: { type: GraphQLID },
     title: { type: GraphQLString },
-    author: {
-      type: AuthorType,
+    user: {
+      type: UserType,
       resolve(parent, args) {
-        return Author.findById(parent.authorId);
+        return User.findById(parent.userId);
       }
     }
   })
 });
 
-const AuthorType = new GraphQLObjectType({
-  name: "Author",
+const UserType = new GraphQLObjectType({
+  name: "User",
   fields: () => ({
-    id: { type: GraphQLID },
+    email: { type: GraphQLString },
+    password: { type: GraphQLString },
     name: { type: GraphQLString },
     username: { type: GraphQLString },
-    age: { type: GraphQLInt },
-    posts: {
-        type: new GraphQLList(PostType),
+    Blogposts: {
+      type: new GraphQLList(BlogPostType),
       resolve(parent, args) {
-          return Post.find({ authorId: parent.id });
-        }
+        return BlogPost.find({ userId: parent.id });
+      }
     }
+  })
+});
+
+const AuthDataType = new GraphQLObjectType({
+  name: "AuthData",
+  fields: () => ({
+    userId: { type: GraphQLString },
+    token: { type: GraphQLString },
+    tokenExpiration: { type: GraphQLInt }
   })
 });
 
 const RootQuery = new GraphQLObjectType({
   name: "RootQueryType",
   fields: {
-    post: {
-      type: PostType,
+    BlogPost: {
+      type: BlogPostType,
       args: { id: { type: GraphQLID } },
       resolve(parent, args) {
-        return Post.findById(args.id);
+        return BlogPost.findById(args.id);
       }
     },
-    author: {
-      type: AuthorType,
+    user: {
+      type: UserType,
       args: { id: { type: GraphQLID } },
       resolve(parent, args) {
-        return Author.findById(args.id);
+        return User.findById(args.id);
       }
     },
-    posts: {
-      type: new GraphQLList(PostType),
+    Blogposts: {
+      type: new GraphQLList(BlogPostType),
       resolve(parent, args) {
-        return Post.find({});
+        return BlogPost.find({});
       }
     },
-    authors: {
-      type: new GraphQLList(AuthorType),
+    users: {
+      type: new GraphQLList(UserType),
       resolve(parent, args) {
-        return Author.find({});
+        return User.find({});
+      }
+    },
+    login: {
+      type: AuthDataType,
+      args: {
+        email: { type: GraphQLString },
+        password: { type: GraphQLString }
+      },
+      resolve(parent, args) {
+        const user = User.findOne({ email: args.email });
       }
     }
   }
 });
 
 const Mutation = new GraphQLObjectType({
-  name: 'Mutation',
+  name: "Mutation",
   fields: {
-    addAuthor: {
-      type: AuthorType,
+    createUser: {
+      type: UserType,
       args: {
+        email: { type: GraphQLString },
+        password: { type: GraphQLString },
         name: { type: GraphQLString },
-        username: { type: GraphQLString },
-        age: { type: GraphQLInt },
+        username: { type: GraphQLString }
       },
-      resolve(parent, args) {
-        let author = new Author({
-          name: args.name,
-          username: args.username,
-          age: args.age
-        });
-        return author.save();
+      async resolve(parent, args) {
+        try {
+          const findEmail = await User.findOne({ email: args.email });
+            if (findEmail) {
+              throw new Error("Email already exists.");
+            }
+            const findName = await User.findOne({ name: args.name });
+            if (findName) {
+              throw new Error("Name already exists.");
+            }
+            const findUsername = await User.findOne({ username: args.username });
+            if (findUsername) {
+              throw new Error("Username exists already.");
+            }
+            let hashedPassword = await bcrypt.hash(args.password, 12);
+            let newuser = new User({
+              email: args.email,
+              password: hashedPassword,
+              name: args.name,
+              username: args.username
+            });
+        const result = await newuser.save();
+        let getresult = await result;
+            return { ...getresult._doc, password: null };
+        } catch(err) {
+            throw err;
+          }
       }
     },
-    addPost: {
-      type: PostType,
+    createBlogPost: {
+      type: BlogPostType,
       args: {
         title: { type: GraphQLString },
-        authorId: { type: GraphQLID }
+        userId: { type: GraphQLID }
       },
       resolve(parent, args) {
-        let post = new Post({
+        let blogpost = new BlogPost({
           title: args.title,
-          authorId: args.authorId
+          userId: args.userId
         });
-        return post.save();
+        return blogpost.save();
       }
     }
   }
-})
+});
 
 module.exports = new GraphQLSchema({
   query: RootQuery,
