@@ -1,7 +1,8 @@
 const graphql = require("graphql");
 const bcrypt = require("bcryptjs");
-const BlogPost = require("../models/blogpost-Model");
+const jwt = require("jsonwebtoken");
 const User = require("../models/user-Model");
+const BlogPost = require("../models/blogpost-Model");
 
 const {
   GraphQLObjectType,
@@ -13,7 +14,7 @@ const {
 } = graphql;
 
 const BlogPostType = new GraphQLObjectType({
-  name: "Post",
+  name: "BlogPost",
   fields: () => ({
     id: { type: GraphQLID },
     title: { type: GraphQLString },
@@ -29,6 +30,7 @@ const BlogPostType = new GraphQLObjectType({
 const UserType = new GraphQLObjectType({
   name: "User",
   fields: () => ({
+    id: { type: GraphQLID },
     email: { type: GraphQLString },
     password: { type: GraphQLString },
     name: { type: GraphQLString },
@@ -57,7 +59,10 @@ const RootQuery = new GraphQLObjectType({
     BlogPost: {
       type: BlogPostType,
       args: { id: { type: GraphQLID } },
-      resolve(parent, args) {
+      resolve(parent, args, req) {
+        if (!req.isAuth) {
+          throw new Error("Unauthenticated!");
+        }
         return BlogPost.findById(args.id);
       }
     },
@@ -70,7 +75,10 @@ const RootQuery = new GraphQLObjectType({
     },
     Blogposts: {
       type: new GraphQLList(BlogPostType),
-      resolve(parent, args) {
+      resolve(parent, args, req) {
+        if (!req.isAuth) {
+          throw new Error("Unauthenticated!");
+        }
         return BlogPost.find({});
       }
     },
@@ -86,8 +94,27 @@ const RootQuery = new GraphQLObjectType({
         email: { type: GraphQLString },
         password: { type: GraphQLString }
       },
-      resolve(parent, args) {
-        const user = User.findOne({ email: args.email });
+      async resolve(parent, args) {
+        const user = await User.findOne({ email: args.email });
+        if (!user) {
+          throw new Error("User does not exist");
+        }
+        const isEqual = await bcrypt.compare(args.password, user.password);
+        if (!isEqual) {
+          throw new Error("Passwords do not match");
+        }
+        const token = jwt.sign(
+          { userId: user.id, email: user.email, username: user.username },
+          "fuckwithitwhileyoucan",
+          {
+            expiresIn: "1h"
+          }
+        );
+        return {
+          userId: user.id,
+          token: token,
+          tokenExpiration: 1
+        };
       }
     }
   }
@@ -107,30 +134,30 @@ const Mutation = new GraphQLObjectType({
       async resolve(parent, args) {
         try {
           const findEmail = await User.findOne({ email: args.email });
-            if (findEmail) {
-              throw new Error("Email already exists.");
-            }
-            const findName = await User.findOne({ name: args.name });
-            if (findName) {
-              throw new Error("Name already exists.");
-            }
-            const findUsername = await User.findOne({ username: args.username });
-            if (findUsername) {
-              throw new Error("Username exists already.");
-            }
-            let hashedPassword = await bcrypt.hash(args.password, 12);
-            let newuser = new User({
-              email: args.email,
-              password: hashedPassword,
-              name: args.name,
-              username: args.username
-            });
-        const result = await newuser.save();
-        let getresult = await result;
-            return { ...getresult._doc, password: null };
-        } catch(err) {
-            throw err;
+          if (findEmail) {
+            throw new Error("Email already exists.");
           }
+          const findName = await User.findOne({ name: args.name });
+          if (findName) {
+            throw new Error("Name already exists.");
+          }
+          const findUsername = await User.findOne({ username: args.username });
+          if (findUsername) {
+            throw new Error("Username exists already.");
+          }
+          let hashedPassword = await bcrypt.hash(args.password, 12);
+          let newuser = new User({
+            email: args.email,
+            password: hashedPassword,
+            name: args.name,
+            username: args.username
+          });
+          const result = await newuser.save();
+          let getresult = await result;
+          return { ...getresult._doc, password: null };
+        } catch (err) {
+          throw err;
+        }
       }
     },
     createBlogPost: {
@@ -139,12 +166,19 @@ const Mutation = new GraphQLObjectType({
         title: { type: GraphQLString },
         userId: { type: GraphQLID }
       },
-      resolve(parent, args) {
-        let blogpost = new BlogPost({
-          title: args.title,
-          userId: args.userId
-        });
-        return blogpost.save();
+      async resolve(parent, args, req) {
+        if (!req.isAuth) {
+          throw new Error("Unauthenticated!");
+        }
+        const findPost = await BlogPost.findOne({ title: args.title });
+          if (findPost) {
+            throw new Error("BlogPost already exists.");
+          }
+          let blogpost = new BlogPost({
+            title: args.title,
+            userId: req.userId
+          });
+          return blogpost.save();
       }
     }
   }
